@@ -1,14 +1,16 @@
 # from memory.replay import ReplayBuffer
+import time
+
 import gym
+import torch
+import torch.distributions as D
+
 from utils.processor import *
 from .models import *
 from utils.memory import *
 from torch import optim
 from torch.autograd import Variable
 from utils.memory import ReplayBuffer
-import torch
-import torch.distributions as D
-import time
 from utils.activation import *
 
 CONFIG = {

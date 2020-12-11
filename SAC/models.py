@@ -1,6 +1,6 @@
-from torch import nn
 import torch
 import torch.nn.functional as F
+from torch import nn
 from torch.distributions import Normal
 
 
@@ -79,6 +79,6 @@ class PolicyNetwork(nn.Module):
         action = torch.tanh(z)
 
         log_pi = normal.log_prob(z) - torch.log(1 - action.pow(2) + epsilon)
-        log_pi = log_pi.sum(1, keepdim=True)
+        log_pi = log_pi.sum(1, keepdim=False)
 
         return action, log_pi
