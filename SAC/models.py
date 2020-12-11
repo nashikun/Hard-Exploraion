@@ -3,10 +3,14 @@ import torch.nn.functional as F
 from torch import nn
 from torch.distributions import Normal
 
+NETWORKS = 0
 
 class ValueNetwork(nn.Module):
 
-    def __init__(self, input_dim, output_dim, init_w=3e-3):
+    def __init__(self, input_dim, output_dim, init_w=3e-3, seed=0):
+        global NETWORKS
+        NETWORKS += 1
+        torch.manual_seed(seed * NETWORKS)
         super(ValueNetwork, self).__init__()
         self.fc1 = nn.Linear(input_dim, 256)
         self.fc2 = nn.Linear(256, 256)
@@ -14,6 +18,7 @@ class ValueNetwork(nn.Module):
 
         self.fc3.weight.data.uniform_(-init_w, init_w)
         self.fc3.bias.data.uniform_(-init_w, init_w)
+        torch.manual_seed(seed)
 
     def forward(self, state):
         x = F.relu(self.fc1(state))
@@ -25,7 +30,10 @@ class ValueNetwork(nn.Module):
 
 class SoftQNetwork(nn.Module):
 
-    def __init__(self, num_inputs, num_actions, hidden_size=256, init_w=3e-3):
+    def __init__(self, num_inputs, num_actions, hidden_size=256, init_w=3e-3, seed=0):
+        global NETWORKS
+        NETWORKS += 1
+        torch.manual_seed(seed * NETWORKS)
         super(SoftQNetwork, self).__init__()
         self.linear1 = nn.Linear(num_inputs + num_actions, hidden_size)
         self.linear2 = nn.Linear(hidden_size, hidden_size)
@@ -33,6 +41,7 @@ class SoftQNetwork(nn.Module):
 
         self.linear3.weight.data.uniform_(-init_w, init_w)
         self.linear3.bias.data.uniform_(-init_w, init_w)
+        torch.manual_seed(seed)
 
     def forward(self, state, action):
         x = torch.cat([state, action], 1)
@@ -44,7 +53,10 @@ class SoftQNetwork(nn.Module):
 
 class PolicyNetwork(nn.Module):
 
-    def __init__(self, num_inputs, num_actions, hidden_size=256, init_w=3e-3, log_std_min=-20, log_std_max=2):
+    def __init__(self, num_inputs, num_actions, hidden_size=256, init_w=3e-3, log_std_min=-20, log_std_max=2, seed=0):
+        global NETWORKS
+        NETWORKS += 1
+        torch.manual_seed(seed * NETWORKS)
         super(PolicyNetwork, self).__init__()
         self.log_std_min = log_std_min
         self.log_std_max = log_std_max
@@ -59,6 +71,7 @@ class PolicyNetwork(nn.Module):
         self.log_std_linear = nn.Linear(hidden_size, num_actions)
         self.log_std_linear.weight.data.uniform_(-init_w, init_w)
         self.log_std_linear.bias.data.uniform_(-init_w, init_w)
+        torch.manual_seed(seed)
 
     def forward(self, state):
         x = F.relu(self.linear1(state))
