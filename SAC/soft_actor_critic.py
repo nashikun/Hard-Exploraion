@@ -1,26 +1,19 @@
 # from memory.replay import ReplayBuffer
+import time
+import datetime
+
 import gym
+import torch
+import torch.distributions as D
+from torch.utils.tensorboard import SummaryWriter
+
 from utils.processor import *
 from .models import *
 from utils.memory import *
 from torch import optim
 from torch.autograd import Variable
 from utils.memory import ReplayBuffer
-import torch
-import torch.distributions as D
-import time
 from utils.activation import *
-
-CONFIG = {
-    "gamma": 0.99,
-    "memory_size": 1000,
-    "learning_rate": 0.0002,
-    "environment": "Pong-v0",
-    "device": "cpu",
-    "update_step": 10000,
-    "training_step": 4,
-    "tau": 0.005
-}
 
 
 class SoftActorCritic:
@@ -35,6 +28,7 @@ class SoftActorCritic:
                  device="cpu",
                  seed=42):
 
+        self.writer = SummaryWriter(log_dir = f"logs/{env}_gamma={gamma}_beta={beta}_tau={tau}_lr={learning_rate}_date={datetime.datetime.now().strftime('%m%d-%H%M%S')}")
         self.device = device
         # Initialize the environment
         self.env = gym.make(env)
@@ -50,19 +44,18 @@ class SoftActorCritic:
         self.input_dim = self.env.observation_space.shape[0]
         self.is_frame = is_frame
         # Initialize the actor and the critic
-        self.actor = PolicyNetwork(num_inputs=self.input_dim, num_actions=self.num_actions)
+        self.actor = PolicyNetwork(num_inputs=self.input_dim, num_actions=self.num_actions, seed=seed)
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=learning_rate)
 
-        self.soft_q_1 = SoftQNetwork(num_inputs=self.input_dim, num_actions=self.num_actions)
+        self.soft_q_1 = SoftQNetwork(num_inputs=self.input_dim, num_actions=self.num_actions, seed=seed)
         self.soft_q_1_optimizer = optim.Adam(self.soft_q_1.parameters(), lr=learning_rate)
-
-        self.soft_q_2 = SoftQNetwork(num_inputs=self.input_dim, num_actions=self.num_actions)
+        self.soft_q_2 = SoftQNetwork(num_inputs=self.input_dim, num_actions=self.num_actions, seed=seed)
         self.soft_q_2_optimizer = optim.Adam(self.soft_q_2.parameters(), lr=learning_rate)
 
-        self.value_network = ValueNetwork(input_dim=self.input_dim, output_dim=1)
+        self.value_network = ValueNetwork(input_dim=self.input_dim, output_dim=1, seed=seed)
         self.value_optimizer = optim.Adam(self.value_network.parameters(), lr=learning_rate)
 
-        self.target_value_network = ValueNetwork(input_dim=self.input_dim, output_dim=1)
+        self.target_value_network = ValueNetwork(input_dim=self.input_dim, output_dim=1, seed=seed)
 
         for target_param, param in zip(self.target_value_network.parameters(), self.value_network.parameters()):
             target_param.data.copy_(param.data)
@@ -74,12 +67,12 @@ class SoftActorCritic:
         self.beta = beta
         self.tau = tau
         # Logging
-        self.rewards_summary = []
         self.eval_rewards_summary = []
         self.history = []
         self.steps = 0
         self.update_step = 0
         self.delay_step = 2
+        self.loss = nn.MSELoss()
 
     def act(self, s) -> tuple:
         input_state = s.reshape(1, -1)
@@ -118,33 +111,37 @@ class SoftActorCritic:
         target_value = self.target_value_network(s2_batch).squeeze()  # Value network
         target_q_value = r_batch + (1 - d_batch) * self.gamma * target_value
 
-        q_1_loss = nn.MSELoss(predicted_q_1, target_q_value)
-        q_2_loss = nn.MSELoss(predicted_q_2, target_q_value)
+        q_1_loss = self.loss(predicted_q_1, target_q_value)
+        q_2_loss = self.loss(predicted_q_2, target_q_value)
+        self.writer.add_scalar("Q1 loss", q_1_loss, self.update_step)
+        self.writer.add_scalar("Q2 loss", q_2_loss, self.update_step)
 
-        next_v_target = torch.min(next_q_1, next_q_2) - next_log_pi
-        curr_v = self.value_network.forward(s_batch)
-        v_loss = nn.MSELoss(curr_v, next_v_target.detach())
-
+        next_v_target = torch.min(next_q_1, next_q_2) - next_log_pi.squeeze()
+        curr_v = self.value_network.forward(s_batch).squeeze()
+        v_loss = self.loss(curr_v, next_v_target.detach())
+        self.writer.add_scalar("Value loss", v_loss, self.update_step)
+    
         # update value network and q networks
         self.value_optimizer.zero_grad()
         v_loss.backward()
         self.value_optimizer.step()
 
         self.soft_q_1_optimizer.zero_grad()
-        q_1_loss.backward()
+        q_1_loss.backward(retain_graph=True)
         self.soft_q_1_optimizer.step()
 
         self.soft_q_2_optimizer.zero_grad()
         q_2_loss.backward()
         self.soft_q_2_optimizer.step()
         # delayed update for policy net and target value nets
-        if self.update_step % self.delay_step == 0:
+        if not self.update_step % self.delay_step:
             new_actions, log_pi = self.actor.sample(s_batch)
             min_q = torch.min(
                 self.soft_q_1.forward(s_batch, a2_batch),
                 self.soft_q_2.forward(s_batch, a2_batch)
             )
             policy_loss = (log_pi - min_q).mean()
+            self.writer.add_scalar("Policy loss", policy_loss, self.update_step)
 
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
@@ -177,7 +174,7 @@ class SoftActorCritic:
             episode_reward = 0
 
             while not is_done and N < 500:
-                action, _, _ = self.act(s)
+                action = self.act(s)
                 s, reward, is_done, _ = self.env.step(action)
                 s = torch.from_numpy(s).float()
                 episode_reward += reward
@@ -187,8 +184,8 @@ class SoftActorCritic:
 
     def run(self, epochs=10, batch_size=32) -> None:
         for j in range(epochs):
+            print(f"Epoch #{j}")
             for i in range(batch_size):
-                print(f"Episode #{j * batch_size + i}")
                 self.env.reset()
                 is_done = False
 
@@ -226,8 +223,9 @@ class SoftActorCritic:
                     s = s_next
                     self.steps += 1
                     N += 1
-                self.rewards_summary.append(episode_reward)
+                self.writer.add_scalar("Episode Rewards", episode_reward, j * batch_size + i)
+                self.writer.flush()
 
             s_batch, a_batch, r_batch, d_batch, s2_batch = self.memory.sample(batch_size, True)
-
             self.update(s_batch, a_batch, r_batch, d_batch, s2_batch)
+        self.writer.close()

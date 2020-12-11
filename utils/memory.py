@@ -35,18 +35,16 @@ class Memory:
 
 class ReplayBuffer:
     def __init__(self, size):
-        self.size = size
-        self.length = 0
-        self.buffer = deque()
+        self.buffer = deque(maxlen=size)
 
     def sample(self, batch_size: int, randomized: bool) -> tuple:
         if randomized:
-            samples = random.sample(self.buffer, min(batch_size, self.length))
+            samples = random.sample(self.buffer, min(batch_size, len(self)))
         else:
-            samples = self.buffer[-min(batch_size, self.length):]
+            samples = self.buffer[-min(batch_size, len(self)):]
 
         s_batch = torch.stack([sample[0] for sample in samples])
-        a_batch = torch.stack([sample[1] for sample in samples])
+        a_batch = torch.Tensor([sample[1] for sample in samples])
         r_batch = torch.Tensor([sample[2] for sample in samples])
         d_batch = torch.Tensor([sample[3] for sample in samples])
         s2_batch = torch.stack([sample[4] for sample in samples])
@@ -54,12 +52,7 @@ class ReplayBuffer:
 
     def store(self, s, a, r, d, s_p) -> None:
         e = (s, a, r, d, s_p)
-        if self.length < self.size:
-            self.buffer.append(e)
-            self.length += 1
-        else:
-            self.buffer.popleft()
-            self.buffer.append(e)
+        self.buffer.append(e)
 
     def __len__(self) -> int:
-        return self.length
+        return len(self.buffer)
