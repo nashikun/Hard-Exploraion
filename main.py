@@ -3,7 +3,7 @@ import os
 import torch
 from torch import dtype
 import numpy as np
-from algos import ActorCritic, REINFORCE, SoftActorCritic
+from SAC.soft_actor_critic import SoftActorCritic
 import seaborn as sns
 import matplotlib.pyplot as plt
 from utils.helper import moving_average

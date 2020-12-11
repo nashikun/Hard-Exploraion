@@ -80,6 +80,7 @@ class SoftActorCritic:
         self.steps = 0
         self.update_step = 0
         self.delay_step = 2
+        self.loss = nn.MSELoss()
 
     def act(self, s) -> tuple:
         input_state = s.reshape(1, -1)
@@ -118,27 +119,27 @@ class SoftActorCritic:
         target_value = self.target_value_network(s2_batch).squeeze()  # Value network
         target_q_value = r_batch + (1 - d_batch) * self.gamma * target_value
 
-        q_1_loss = nn.MSELoss(predicted_q_1, target_q_value)
-        q_2_loss = nn.MSELoss(predicted_q_2, target_q_value)
+        q_1_loss = self.loss(predicted_q_1, target_q_value)
+        q_2_loss = self.loss(predicted_q_2, target_q_value)
 
-        next_v_target = torch.min(next_q_1, next_q_2) - next_log_pi
-        curr_v = self.value_network.forward(s_batch)
-        v_loss = nn.MSELoss(curr_v, next_v_target.detach())
-
+        next_v_target = torch.min(next_q_1, next_q_2) - next_log_pi.squeeze()
+        curr_v = self.value_network.forward(s_batch).squeeze()
+        v_loss = self.loss(curr_v, next_v_target.detach())
+    
         # update value network and q networks
         self.value_optimizer.zero_grad()
         v_loss.backward()
         self.value_optimizer.step()
 
         self.soft_q_1_optimizer.zero_grad()
-        q_1_loss.backward()
+        q_1_loss.backward(retain_graph=True)
         self.soft_q_1_optimizer.step()
 
         self.soft_q_2_optimizer.zero_grad()
         q_2_loss.backward()
         self.soft_q_2_optimizer.step()
         # delayed update for policy net and target value nets
-        if self.update_step % self.delay_step == 0:
+        if not self.update_step % self.delay_step:
             new_actions, log_pi = self.actor.sample(s_batch)
             min_q = torch.min(
                 self.soft_q_1.forward(s_batch, a2_batch),
@@ -177,7 +178,7 @@ class SoftActorCritic:
             episode_reward = 0
 
             while not is_done and N < 500:
-                action, _, _ = self.act(s)
+                action = self.act(s)
                 s, reward, is_done, _ = self.env.step(action)
                 s = torch.from_numpy(s).float()
                 episode_reward += reward
